@@ -1,0 +1,71 @@
+---
+    name: Docker
+    on:
+      schedule:
+        - cron: 15 1 * * *
+      push:
+        branches:
+          - main
+        tags:
+          - v*.*.*
+      pull_request:
+        branches:
+          - main
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+    jobs:
+      build:
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+          packages: write
+          id-token: write
+        steps:
+          - name: Checkout repository
+            uses: actions/checkout@v3
+          - name: Install cosign
+            if: github.event_name != 'pull_request'
+            uses: sigstore/cosign-installer@6e04d228eb30da1757ee4e1dd75a0ec73a653e06
+            with:
+              cosign-release: v2.1.1
+          - name: Set up Docker Buildx
+            uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226
+          - name: Log into registry ${{ env.REGISTRY }}
+            if: github.event_name != 'pull_request'
+            uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d
+            with:
+              registry: ${{ env.REGISTRY }}
+              username: ${{ github.actor }}
+              password: ${{ secrets.GITHUB_TOKEN }}
+          - name: Extract Docker metadata
+            id: meta
+            uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934
+            with:
+              images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          - name: Authenticate Google Cloud Run Service
+            id: auth
+            uses: google-github-actions/auth@v2
+            with:
+              token_format: access_token
+              workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+              service_account: ${{ vars.CLOUD_RUN_SA }}
+          - name: Docker Auth
+            id: docker-auth
+            uses: docker/login-action@v1
+            with:
+              username: oauth2accesstoken
+              password: ${{ steps.auth.outputs.access_token }}
+              registry: ${{ vars.REGION }}-docker.pkg.dev
+          - name: Build, tag and push container
+            id: build-image
+            uses: docker/build-push-action@v3
+            with:
+              push: true
+              tags: >
+                ${{ vars.REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{
+                vars.ARTIFACT_REPO }}/${{ vars.JOB_NAME }}
+              build-args: |
+                GCP_CREDS_JSON_BASE64=${{ secrets.GCP_CREDS_JSON_BASE64 }}
+  
+    
